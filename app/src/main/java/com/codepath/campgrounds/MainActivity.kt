@@ -12,6 +12,9 @@ import com.codepath.asynchttpclient.callback.JsonHttpResponseHandler
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import org.json.JSONException
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers.IO
+import kotlinx.coroutines.launch
 
 fun createJson() = Json {
     isLenient = true
@@ -44,6 +47,23 @@ class MainActivity : AppCompatActivity() {
         val campgroundAdapter = CampgroundAdapter(this, campgrounds)
         campgroundsRecyclerView.adapter = campgroundAdapter
 
+        // Load campgrounds from the Room database
+        lifecycleScope.launch {
+            (application as CampgroundApplication).db.campgroundDao().getAll().collect { databaseList ->
+                databaseList.map { entity ->
+                    Campground(
+                        entity.name,
+                        entity.description,
+                        entity.latLong,
+                        listOf(CampgroundImage(entity.imageUrl, null))
+                    )
+                }.also { mappedList ->
+                    campgrounds.clear()
+                    campgrounds.addAll(mappedList)
+                    campgroundAdapter.notifyDataSetChanged()
+                }
+            }
+        }
 
         campgroundsRecyclerView.layoutManager = LinearLayoutManager(this).also {
             val dividerItemDecoration = DividerItemDecoration(this, it.orientation)
@@ -61,23 +81,32 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to fetch campgrounds: $statusCode")
             }
 
+
             override fun onSuccess(statusCode: Int, headers: Headers, json: JSON) {
                 Log.i(TAG, "Successfully fetched campgrounds: $json")
+
                 try {
-                    // TODO: Create the parsedJSON
                     val parsedJson = createJson().decodeFromString(
                         CampgroundResponse.serializer(),
                         json.jsonObject.toString()
                     )
 
-                    // TODO: Do something with the returned json (contains campground information)
                     parsedJson.data?.let { list ->
-                        campgrounds.addAll(list)
+                        lifecycleScope.launch(IO) {
+                            (application as CampgroundApplication).db.campgroundDao().deleteAll()
+
+                            (application as CampgroundApplication).db.campgroundDao().insertAll(
+                                list.map {
+                                    CampgroundEntity(
+                                        name = it.name,
+                                        description = it.description,
+                                        latLong = it.latLong,
+                                        imageUrl = it.imageUrl
+                                    )
+                                }
+                            )
+                        }
                     }
-
-                    // TODO: Save the campgrounds and reload the screen
-                    campgroundAdapter.notifyDataSetChanged()
-
                 } catch (e: JSONException) {
                     Log.e(TAG, "Exception: $e")
                 }
